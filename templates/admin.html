@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Admin Dashboard</h1>
+        <p class="muted">Generate cryptographically protected QR codes and monitor attendance.</p>
+    </div>
+</div>
+
+<section class="grid two">
+    <div class="card">
+        <h2>Create Event</h2>
+        <form id="eventForm">
+            <label>Event ID</label>
+            <input id="event_id" placeholder="CNS101" required>
+
+            <label>Event Name</label>
+            <input id="event_name" placeholder="Cyber Security Seminar" required>
+
+            <label>Date</label>
+            <input id="event_date" type="date" required>
+
+            <div class="grid two">
+                <div>
+                    <label>Start Time</label>
+                    <input id="start_time" type="time" required>
+                </div>
+                <div>
+                    <label>End Time</label>
+                    <input id="end_time" type="time" required>
+                </div>
+            </div>
+            <button class="btn primary">Create Event</button>
+        </form>
+        <div id="eventMessage"></div>
+    </div>
+
+    <div class="card">
+        <h2>Security Model</h2>
+        <div class="security-flow">
+            <span>Event Data</span> →
+            <span>Nonce</span> →
+            <span>HMAC-SHA256</span> →
+            <span>QR</span>
+        </div>
+        <ul>
+            <li>60-second QR validity</li>
+            <li>Unique nonce</li>
+            <li>HMAC tamper detection</li>
+            <li>One-time QR session</li>
+            <li>Replay attack protection</li>
+        </ul>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Events</h2>
+    <div class="table-wrap">
+    <table>
+        <thead>
+        <tr>
+            <th>Event</th><th>Date</th><th>Time</th><th>Present</th><th>Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for e in events %}
+        <tr>
+            <td><b>{{ e.event_name }}</b><br><small>{{ e.event_id }}</small></td>
+            <td>{{ e.event_date }}</td>
+            <td>{{ e.start_time }} - {{ e.end_time }}</td>
+            <td>{{ e.present_count }}/{{ e.total_students }}</td>
+            <td>
+                <button class="btn" onclick="showQR({{ e.id }}, '{{ e.event_name|e }}')">Generate QR</button>
+                <button class="btn secondary" onclick="viewAttendance({{ e.id }}, '{{ e.event_name|e }}')">Attendance</button>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No events created yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Recent Security Logs</h2>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Time</th><th>Action</th><th>User</th><th>Event</th><th>Details</th></tr></thead>
+        <tbody>
+        {% for log in logs %}
+        <tr>
+            <td>{{ log.created_at }}</td>
+            <td><span class="badge">{{ log.action }}</span></td>
+            <td>{{ log.user_name or '-' }}</td>
+            <td>{{ log.event_name or '-' }}</td>
+            <td>{{ log.details }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No security logs yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<div id="modal" class="modal hidden">
+    <div class="modal-card">
+        <button class="close" onclick="closeModal()">×</button>
+        <div id="modalContent"></div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById("eventForm").addEventListener("submit", async function(e) {
+    e.preventDefault();
+
+    const message = document.getElementById("eventMessage");
+    message.innerHTML = '<div class="alert">Creating event...</div>';
+
+    const payload = {
+        event_id: document.getElementById("event_id").value.trim(),
+        event_name: document.getElementById("event_name").value.trim(),
+        event_date: document.getElementById("event_date").value,
+        start_time: document.getElementById("start_time").value,
+        end_time: document.getElementById("end_time").value
+    };
+
+    try {
+        const response = await fetch("/api/events", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            message.innerHTML = `<div class="alert error">✗ ${data.error || "Event creation failed."}</div>`;
+            return;
+        }
+
+        message.innerHTML = '<div class="alert success">✓ Event created successfully.</div>';
+        document.getElementById("eventForm").reset();
+
+        // Reload so the newly created event appears in the Events table.
+        setTimeout(() => location.reload(), 700);
+
+    } catch (error) {
+        console.error(error);
+        message.innerHTML = '<div class="alert error">✗ Server/network error. Check the Flask terminal.</div>';
+    }
+});
+
+async function showQR(id, name) {
+    const modal = document.getElementById("modal");
+    const content = document.getElementById("modalContent");
+    modal.classList.remove("hidden");
+    content.innerHTML = `
+        <h2>${name}</h2>
+        <p class="muted">This QR is valid for 60 seconds. Generate a new one after expiry.</p>
+        <div class="spinner">Generating secure QR...</div>
+    `;
+
+    try {
+        const response = await fetch(`/api/events/${id}/qr`);
+        if (!response.ok) throw new Error("Could not generate QR");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        content.innerHTML = `
+            <h2>${name}</h2>
+            <img class="qr-image" src="${url}" alt="Secure QR">
+            <p><b>Validity:</b> 60 seconds</p>
+            <p class="muted">HMAC-SHA256 + timestamp + nonce</p>
+            <button class="btn primary" onclick="showQR(${id}, '${name.replaceAll("'", "\\'")}')">Refresh QR</button>
+        `;
+    } catch (e) {
+        content.innerHTML = `<div class="alert error">${e.message}</div>`;
+    }
+}
+
+async function viewAttendance(id, name) {
+    const modal = document.getElementById("modal");
+    const content = document.getElementById("modalContent");
+    modal.classList.remove("hidden");
+    content.innerHTML = `<h2>${name} — Attendance</h2><div class="spinner">Loading...</div>`;
+
+    const response = await fetch(`/api/events/${id}/attendance`);
+    const data = await response.json();
+
+    let rows = data.attendance.map(x => `
+        <tr>
+            <td>${x.student_id}</td>
+            <td>${x.name}</td>
+            <td>${x.email}</td>
+            <td>${x.scanned_at}</td>
+        </tr>
+    `).join("");
+
+    content.innerHTML = `
+        <h2>${name} — Attendance</h2>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Student ID</th><th>Name</th><th>Email</th><th>Scanned At</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4">No attendance yet.</td></tr>'}</tbody>
+        </table>
+        </div>
+    `;
+}
+
+function closeModal() {
+    document.getElementById("modal").classList.add("hidden");
+}
+</script>
+{% endblock %}

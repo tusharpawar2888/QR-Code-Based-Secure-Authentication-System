@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Student Dashboard</h1>
+        <p class="muted">Scan the current event QR code to mark attendance.</p>
+    </div>
+    <div class="student-actions"><button class="btn primary" onclick="openScanner()">📷 Scan QR</button><label class="btn secondary upload-btn">🖼️ Upload QR Image<input id="qrImageInput" type="file" accept="image/png,image/jpeg,image/webp" onchange="decodeUploadedQR(event)" hidden></label></div>
+</div>
+
+<section class="grid cards">
+{% for e in events %}
+<div class="card event-card">
+    <h2>{{ e.event_name }}</h2>
+    <p><b>Event ID:</b> {{ e.event_id }}</p>
+    <p>{{ e.event_date }} | {{ e.start_time }} - {{ e.end_time }}</p>
+    {% if e.attended %}
+        <div class="success">✓ Attendance already marked</div>
+    {% else %}
+        <button class="btn primary" onclick="openScanner()">Scan QR</button>
+    {% endif %}
+</div>
+{% else %}
+<div class="card"><p>No events available.</p></div>
+{% endfor %}
+</section>
+
+<div id="scannerModal" class="modal hidden">
+    <div class="modal-card scanner-card">
+        <button class="close" onclick="closeScanner()">×</button>
+        <h2>Scan Secure QR</h2>
+        <p class="muted">Allow camera access and scan the QR displayed by the administrator.</p>
+        <div id="reader"></div>
+        <div id="scanResult"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+let scanner = null;
+let scannerRunning = false;
+
+function openScanner() {
+    document.getElementById("scannerModal").classList.remove("hidden");
+    document.getElementById("scanResult").innerHTML = "";
+    if (!scanner) {
+        scanner = new Html5Qrcode("reader");
+    }
+
+    scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        async decodedText => {
+            if (scannerRunning) return;
+            scannerRunning = true;
+            await submitScan(decodedText);
+        },
+        () => {}
+    ).catch(err => {
+        document.getElementById("scanResult").innerHTML =
+            `<div class="alert error">Camera could not start: ${err}</div>`;
+    });
+}
+
+async function decodeUploadedQR(event) {
+    const file = event.target.files[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    document.getElementById("scannerModal").classList.remove("hidden");
+    document.getElementById("scanResult").innerHTML =
+        `<div class="alert">Reading QR image...</div>`;
+
+    try {
+        const imageUrl = URL.createObjectURL(file);
+        const img = new Image();
+
+        img.onload = async function() {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            ctx.drawImage(img, 0, 0);
+
+            const imageData = ctx.getImageData(
+                0, 0, canvas.width, canvas.height
+            );
+
+            const code = jsQR(
+                imageData.data,
+                imageData.width,
+                imageData.height
+            );
+
+            URL.revokeObjectURL(imageUrl);
+
+            if (!code) {
+                document.getElementById("scanResult").innerHTML =
+                    `<div class="alert error">
+                        ✗ No QR code could be detected in this image.
+                        Please upload a clear QR image.
+                    </div>`;
+                return;
+            }
+
+            await submitScan(code.data);
+        };
+
+        img.onerror = function() {
+            URL.revokeObjectURL(imageUrl);
+            document.getElementById("scanResult").innerHTML =
+                `<div class="alert error">✗ Could not read the selected image.</div>`;
+        };
+
+        img.src = imageUrl;
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById("scanResult").innerHTML =
+            `<div class="alert error">✗ Could not process the QR image.</div>`;
+    }
+}
+
+async function submitScan(token) {
+    document.getElementById("scanResult").innerHTML =
+        `<div class="alert">Verifying HMAC, timestamp and nonce...</div>`;
+
+    try {
+        const response = await fetch("/api/attendance/scan", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({token})
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            document.getElementById("scanResult").innerHTML =
+                `<div class="alert success">✓ ${data.message}</div>`;
+
+            setTimeout(closeScanner, 1200);
+        } else {
+            document.getElementById("scanResult").innerHTML =
+                `<div class="alert error">✗ ${data.error}</div>`;
+            scannerRunning = false;
+        }
+    } catch (e) {
+        console.error(e);
+        document.getElementById("scanResult").innerHTML =
+            `<div class="alert error">Network error. Make sure the server is running.</div>`;
+        scannerRunning = false;
+    }
+}
+
+async function closeScanner() {
+    if (scanner) {
+        try { await scanner.stop(); } catch(e) {}
+        try { scanner.clear(); } catch(e) {}
+    }
+
+    scanner = null;
+    scannerRunning = false;
+    document.getElementById("scannerModal").classList.add("hidden");
+    location.reload();
+}
+</script>
+{% endblock %}

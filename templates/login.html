@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="auth-card">
+    <h1>Secure QR Authentication</h1>
+    <p class="muted">College Event & Attendance Security System</p>
+
+    {% if error %}
+    <div class="alert error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+        <label>Email</label>
+        <input name="email" type="email" placeholder="Enter email" required>
+
+        <label>Password</label>
+        <input name="password" type="password" placeholder="Enter password" required>
+
+        <button class="btn primary full">Login</button>
+    </form>
+
+    <div class="demo-box">
+        <b>Demo accounts</b><br>
+        Admin: admin@college.local / Admin@123<br>
+        Student: tushar@college.local / Student@123
+    </div>
+</div>
+{% endblock %}
